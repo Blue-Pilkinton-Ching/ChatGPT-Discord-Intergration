@@ -27,8 +27,8 @@ const threads = []
 
 client.on('messageCreate', async (message) => {
   const gpt4Prompt =
-    'As a Discord chatbot, your primary goal is to provide clear and concise responses. Please keep your messages under 2000 characters, with 1800 characters as the target. If your response is longer, you can split it into smaller messages. You can send the initial part of your reply and follow up with the rest in your next message when the user responds.'
-  const model = 'gpt-3.5-turbo'
+    'As a Discord chatbot, your primary goal is to provide clear and concise responses.'
+  const model = 'gpt-4'
   const gpt4Channel = 'ask-gpt-4'
 
   if (
