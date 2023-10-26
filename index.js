@@ -28,7 +28,7 @@ const threads = []
 client.on('messageCreate', async (message) => {
   const gpt4Prompt =
     'As a Discord chatbot, your primary goal is to provide clear and concise responses.'
-  const model = 'gpt-4'
+  const model = 'gpt-3.5-turbo'
   const gpt4Channel = 'ask-gpt-4'
 
   if (
