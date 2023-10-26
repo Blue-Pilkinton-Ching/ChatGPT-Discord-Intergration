@@ -28,12 +28,18 @@ const threads = []
 client.on('messageCreate', async (message) => {
   if (
     message.author.id != process.env.bjj_user_id ||
-    message.content.startsWith('!')
+    message.content.startsWith('!') ||
+    message.author.bot
   ) {
     return
   }
 
-  //console.log(message)
+  if (message.content === '/clear' && message.channel.name === 'ask-gpt-4') {
+    message.channel.threads.cache.forEach((thread) => {
+      thread.delete()
+      return
+    })
+  }
 
   if (message.channel.name === 'ask-gpt-4' && !message.channel.isThread()) {
     const title = await GenerateTitle(message)
@@ -43,6 +49,13 @@ client.on('messageCreate', async (message) => {
       autoArchiveDuration: 10080,
       reason: 'Needed a separate thread for food',
     })
+
+    let conversation = [
+      {
+        role: 'system',
+        content: '',
+      },
+    ]
   }
 })
 
@@ -51,7 +64,7 @@ async function GenerateTitle(message) {
     {
       role: 'system',
       content:
-        'You are a title generator chatbot. You summerise text sent by the user into a short, simple, and neutral half sentence to be used as a header for a chat. The header is always less than 30 characters. The header should be general, and not specific. The header should not be wrapped in any quotations. The header does not try to answer the question or text.',
+        'You are a header generator chatbot. You summerise text sent by the user into a concise, simple, and neutral half sentence to be used as a topic header for the message. The header is always less than 35 characters. The header is general, not specific. The header should not be wrapped in any quotations. The header does not try to answer the question or text.',
     },
   ]
 
