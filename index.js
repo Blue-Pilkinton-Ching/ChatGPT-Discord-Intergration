@@ -1,6 +1,7 @@
 import dotenv from 'dotenv'
 import { Client, GatewayIntentBits, IntentsBitField } from 'discord.js'
 import OpenAI from 'openai'
+import { getEncoding } from 'js-tiktoken'
 
 dotenv.config()
 
@@ -25,12 +26,20 @@ const openai = new OpenAI({
 
 const threads = []
 
-client.on('messageCreate', async (message) => {
-  const gpt4Prompt =
-    'As a Discord chatbot, your primary goal is to provide clear and concise responses.'
-  const model = 'gpt-3.5-turbo'
-  const gpt4Channel = 'ask-gpt-4'
+const settings = {
+  headerPrompt:
+    'You are a header generator chatbot. You summerise text sent by the user into a concise, simple, and neutral half sentence to be used as a topic header for the message. The header is always less than 35 characters. The header is general, not specific. The header should not be wrapped in any quotations. The header does not try to answer the question or text.',
+  gpt4Prompt:
+    'As a Discord chatbot, your primary goal is to provide clear and concise responses.',
+  model: 'gpt-3.5-turbo',
+  //model: 'gpt-4',
+  gpt4Channel: 'ask-gpt-4',
+  currency: 'NZD',
+  inputCostPer1k: 0.03,
+  outputCostPer1k: 0.06,
+}
 
+client.on('messageCreate', async (message) => {
   if (
     message.author.id != process.env.bjj_user_id ||
     message.content.startsWith('!') ||
@@ -39,76 +48,78 @@ client.on('messageCreate', async (message) => {
     return
   }
 
-  if (message.content === '/clear' && message.channel.name === gpt4Channel) {
+  if (
+    message.content === '/clear' &&
+    message.channel.name === settings.gpt4Channel
+  ) {
     message.channel.threads.cache.forEach((thread) => {
       thread.delete()
     })
     return
   }
 
-  if (message.channel.name === gpt4Channel && !message.channel.isThread()) {
+  // THREAD STARTING
+  if (
+    message.channel.name === settings.gpt4Channel &&
+    !message.channel.isThread()
+  ) {
     const title = await GenerateTitle(message)
 
-    let thread = await message.startThread({
+    let newThread = await message.startThread({
       name: title,
       autoArchiveDuration: 10080,
-      reason: 'Needed a separate thread for food',
     })
 
-    threads.push({ id: thread.id, conversation: [] })
-
-    threads[threads.length - 1].conversation.push({
-      role: 'system',
-      content: gpt4Prompt,
+    threads.push({
+      id: newThread.id,
+      conversation: [],
+      totalCost: 0,
+      totalTokens: 0,
     })
 
-    threads[threads.length - 1].conversation.push({
-      role: 'user',
-      content: message.content,
-    })
+    const thread = threads[threads.length - 1]
 
-    thread.sendTyping()
+    AddMessageToThread(thread, 'system', settings.gpt4Prompt)
+    AddMessageToThread(thread, 'user', message.content)
+
+    newThread.sendTyping()
 
     const result = await openai.chat.completions.create({
-      messages: threads[threads.length - 1].conversation,
-      model: model,
+      messages: thread.conversation,
+      model: settings.model,
     })
 
-    threads[threads.length - 1].conversation.push({
-      role: 'system',
-      content: result.choices[0].message.content,
-    })
+    AddMessageToThread(thread, 'system', result.choices[0].message.content)
 
     splitLongMessages(result.choices[0].message.content).forEach(
       (messageContent) => {
-        thread.send(messageContent)
+        newThread.send(messageContent)
       }
     )
+
+    await CalculateStats(thread)
+    newThread.send(thread.totalTokens.toString())
+    newThread.send(JSON.stringify(thread.totalCost))
   }
 
+  // THREAD CONVERSATION
   if (
     message.channel.isThread() &&
-    message.channel.parent.name === gpt4Channel
+    message.channel.parent.name === settings.gpt4Channel
   ) {
-    const thread = threads.find((thread) => thread.id === message.channel.id)
+    const thread =
+      threads[threads.findIndex((thread) => thread.id === message.channel.id)]
 
-    thread.conversation.push({
-      role: 'user',
-      content: message.content,
-    })
-
+    AddMessageToThread(thread, 'user', message.content)
     message.channel.sendTyping()
 
     const result = await openai.chat.completions.create({
       messages: threads.find((thread) => thread.id === message.channel.id)
         .conversation,
-      model: model,
+      model: settings.model,
     })
 
-    thread.conversation.push({
-      role: 'system',
-      content: result.choices[0].message.content,
-    })
+    AddMessageToThread(thread, 'system', result.choices[0].message.content)
 
     splitLongMessages(result.choices[0].message.content).forEach(
       (messageContent) => {
@@ -116,17 +127,54 @@ client.on('messageCreate', async (message) => {
         message.channel.send(messageContent)
       }
     )
+
+    await CalculateStats(thread)
+    message.channel.send(thread.totalTokens.toString())
+    message.channel.send(JSON.stringify(thread.totalCost))
   }
 })
 
-async function GenerateTitle(message) {
-  const headerPrompt =
-    'You are a header generator chatbot. You summerise text sent by the user into a concise, simple, and neutral half sentence to be used as a topic header for the message. The header is always less than 35 characters. The header is general, not specific. The header should not be wrapped in any quotations. The header does not try to answer the question or text.'
+function AddMessageToThread(thread, role, content) {
+  thread.conversation.push({
+    role: role,
+    content: content,
+  })
+}
 
+async function CalculateStats(thread) {
+  const inputTokens =
+    thread.totalTokens +
+    getEncoding('cl100k_base').encode(
+      thread.conversation[thread.conversation.length - 2].content
+    ).length
+
+  const outputTokens = getEncoding('cl100k_base').encode(
+    thread.conversation[thread.conversation.length - 1].content
+  ).length
+
+  const usdCost =
+    inputTokens * 0.001 * settings.inputCostPer1k +
+    outputTokens * 0.001 * settings.outputCostPer1k
+
+  const fetchLink = `http://api.exchangeratesapi.io/v1/convert?access_key=${
+    process.env.exchange_rate_key
+  }&from=USD&to=${settings.currency}&amount=${10}`
+
+  const response = await fetch(fetchLink)
+  const json = await response.json()
+
+  thread.totalCost = json
+
+  console.log(thread.totalCost)
+
+  thread.totalTokens = inputTokens + outputTokens
+}
+
+async function GenerateTitle(message) {
   let createTitle = [
     {
       role: 'system',
-      content: headerPrompt,
+      content: settings.headerPrompt,
     },
   ]
 
