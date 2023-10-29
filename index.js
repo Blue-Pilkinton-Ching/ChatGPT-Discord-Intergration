@@ -1,7 +1,6 @@
 import dotenv from 'dotenv'
-import { Client, GatewayIntentBits, IntentsBitField } from 'discord.js'
+import { Client, IntentsBitField } from 'discord.js'
 import OpenAI from 'openai'
-import { getEncoding } from 'js-tiktoken'
 
 dotenv.config()
 
@@ -31,15 +30,15 @@ client.on('messageCreate', async (message) => {
     headerPrompt:
       'You are a header generator chatbot. You summerise text sent by the user into a concise, simple, and neutral half sentence to be used as a topic header for the message. The header is always less than 35 characters. The header is general, not specific. The header should not be wrapped in any quotations. The header does not try to answer the question or text.',
     gpt4Prompt:
-      'As a Discord chatbot, your primary goal is to provide clear and concise responses.',
+      'You are a discord chatbot. You provide clear and concise responses, to user questions and queries.',
     model: 'gpt-3.5-turbo',
-    //model: 'gpt-4',
+    // model: 'gpt-4',
     gpt4Channel: 'ask-gpt-4',
     currency: 'NZD',
     gpt4inputCostPer1k: 0.03,
     gpt4outputCostPer1k: 0.06,
-    gpt3inputCostPer1k: 0.003,
-    gpt3outputCostPer1k: 0.004,
+    gpt3inputCostPer1k: 0.0015,
+    gpt3outputCostPer1k: 0.002,
     decimalCount: 3,
   }
 
@@ -82,26 +81,10 @@ client.on('messageCreate', async (message) => {
 
     const thread = threads[threads.length - 1]
 
-    AddMessageToThread(thread, 'system', settings.gpt4Prompt)
-    AddMessageToThread(thread, 'user', message.content)
+    AddMessageToConversation(thread, 'system', settings.gpt4Prompt)
+    AddMessageToConversation(thread, 'user', message.content)
 
-    newThread.sendTyping()
-
-    const result = await openai.chat.completions.create({
-      messages: thread.conversation,
-      model: settings.model,
-    })
-
-    AddMessageToThread(thread, 'system', result.choices[0].message.content)
-
-    splitLongMessages(result.choices[0].message.content).forEach(
-      (messageContent) => {
-        newThread.send(messageContent)
-      }
-    )
-
-    await CalculateStats(thread)
-    SendStats(newThread, thread)
+    await SendAIResponse(newThread, thread)
   }
 
   // THREAD CONVERSATION
@@ -112,30 +95,55 @@ client.on('messageCreate', async (message) => {
     const thread =
       threads[threads.findIndex((thread) => thread.id === message.channel.id)]
 
-    AddMessageToThread(thread, 'user', message.content)
-    message.channel.sendTyping()
+    AddMessageToConversation(thread, 'user', message.content)
+    SendAIResponse(message.channel, thread)
+  }
 
-    const result = await openai.chat.completions.create({
-      messages: threads.find((thread) => thread.id === message.channel.id)
-        .conversation,
+  // AI RESPONSE
+
+  async function SendAIResponse(channel, thread) {
+    channel.sendTyping()
+
+    const completion = await openai.chat.completions.create({
+      messages: thread.conversation,
       model: settings.model,
     })
 
-    AddMessageToThread(thread, 'system', result.choices[0].message.content)
-
-    splitLongMessages(result.choices[0].message.content).forEach(
+    SplitLongMessages(completion.choices[0].message.content).forEach(
       (messageContent) => {
-        message.channel.send(messageContent)
+        channel.send(messageContent)
       }
     )
 
-    await CalculateStats(thread)
-    SendStats(message.channel, thread)
-  }
+    AddMessageToConversation(
+      thread,
+      'assistant',
+      completion.choices[0].message.content
+    )
 
-  // HELPER FUNCTIONS
+    // Calculate stats
 
-  function SendStats(channel, thread) {
+    const usdCost =
+      usage.prompt_tokens *
+        (0.001 *
+          (settings.model === 'gpt4'
+            ? settings.gpt4inputCostPer1k
+            : settings.gpt3inputCostPer1k)) +
+      usage.completion_tokens *
+        0.001 *
+        (settings.model === 'gpt4'
+          ? settings.gpt4outputCostPer1k
+          : settings.gpt3outputCostPer1k)
+
+    const fetchLink = `https://v6.exchangerate-api.com/v6/${process.env.exchange_rate_key}/pair/USD/${settings.currency}`
+    const response = await fetch(fetchLink)
+    const json = await response.json()
+
+    thread.totalCost = thread.totalCost + json.conversion_rate * usdCost
+    thread.totalTokens = usage.total_tokens
+
+    // Send stats
+
     channel.send(
       `***${settings.model} | ${thread.totalTokens} tokens | ${(
         thread.totalCost * 100
@@ -143,46 +151,13 @@ client.on('messageCreate', async (message) => {
     )
   }
 
-  function AddMessageToThread(thread, role, content) {
+  // HELPER FUNCTIONS
+
+  function AddMessageToConversation(thread, role, completion) {
     thread.conversation.push({
       role: role,
-      content: content,
+      content: completion,
     })
-  }
-
-  async function CalculateStats(thread) {
-    const inputTokens =
-      thread.totalTokens +
-      getEncoding('cl100k_base').encode(
-        thread.conversation[thread.conversation.length - 2].content
-      ).length
-
-    const outputTokens = getEncoding('cl100k_base').encode(
-      thread.conversation[thread.conversation.length - 1].content
-    ).length
-
-    const usdCost =
-      inputTokens *
-        (0.001 *
-          (settings.model === 'gpt4'
-            ? settings.gpt4inputCostPer1k
-            : settings.gpt3inputCostPer1k)) +
-      outputTokens *
-        0.001 *
-        (settings.model === 'gpt4'
-          ? settings.gpt4outputCostPer1k
-          : settings.gpt3outputCostPer1k)
-
-    const fetchLink = `https://v6.exchangerate-api.com/v6/${process.env.exchange_rate_key}/pair/USD/${settings.currency}`
-
-    console.log(fetchLink)
-
-    const response = await fetch(fetchLink)
-    const json = await response.json()
-
-    thread.totalCost = thread.totalCost + json.conversion_rate * usdCost
-
-    thread.totalTokens = inputTokens + outputTokens
   }
 
   async function GenerateTitle(message) {
@@ -206,7 +181,7 @@ client.on('messageCreate', async (message) => {
     return result.choices[0].message.content
   }
 
-  function splitLongMessages(messageContent) {
+  function SplitLongMessages(messageContent) {
     const discordCharactorLimit = 2000
 
     let response = []
