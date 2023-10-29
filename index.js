@@ -1,6 +1,7 @@
 import dotenv from 'dotenv'
 import { Client, IntentsBitField } from 'discord.js'
 import OpenAI from 'openai'
+import { getEncoding } from 'js-tiktoken'
 
 dotenv.config()
 
@@ -96,7 +97,7 @@ client.on('messageCreate', async (message) => {
       threads[threads.findIndex((thread) => thread.id === message.channel.id)]
 
     AddMessageToConversation(thread, 'user', message.content)
-    SendAIResponse(message.channel, thread)
+    await SendAIResponse(message.channel, thread)
   }
 
   // AI RESPONSE
@@ -107,29 +108,60 @@ client.on('messageCreate', async (message) => {
     const completion = await openai.chat.completions.create({
       messages: thread.conversation,
       model: settings.model,
+      stream: true,
     })
 
-    SplitLongMessages(completion.choices[0].message.content).forEach(
-      (messageContent) => {
-        channel.send(messageContent)
-      }
-    )
+    let messageContent = ['']
+    let messageSection = 0
+    let editSection = 0
+    let outputTokens = 0
+    let messages = [await channel.send('Waiting for stream...')]
+    let finishedMessage = false
 
-    AddMessageToConversation(
-      thread,
-      'assistant',
-      completion.choices[0].message.content
-    )
+    let startedEditing = false
+
+    for await (const chunk of completion) {
+      const chunkContent = chunk.choices[0].delta.content
+
+      if (chunk.choices[0].finish_reason) {
+        finishedMessage = true
+        break
+      }
+
+      if (chunkContent) {
+        outputTokens++
+
+        if (
+          messageContent[messageSection].length + chunkContent.length >=
+          2000
+        ) {
+          messageSection += 1
+
+          const newMessage = await channel.send('Waiting for stream...')
+
+          messages[messageSection] = newMessage
+          messageContent.push('')
+        }
+
+        messageContent[messageSection] =
+          messageContent[messageSection] + chunkContent
+
+        if (!startedEditing) {
+          startedEditing
+          EditMessages()
+        }
+      }
+    }
 
     // Calculate stats
 
     const usdCost =
-      usage.prompt_tokens *
+      thread.totalTokens *
         (0.001 *
           (settings.model === 'gpt4'
             ? settings.gpt4inputCostPer1k
             : settings.gpt3inputCostPer1k)) +
-      usage.completion_tokens *
+      outputTokens *
         0.001 *
         (settings.model === 'gpt4'
           ? settings.gpt4outputCostPer1k
@@ -140,7 +172,7 @@ client.on('messageCreate', async (message) => {
     const json = await response.json()
 
     thread.totalCost = thread.totalCost + json.conversion_rate * usdCost
-    thread.totalTokens = usage.total_tokens
+    thread.totalTokens = thread.totalTokens + outputTokens
 
     // Send stats
 
@@ -149,16 +181,37 @@ client.on('messageCreate', async (message) => {
         thread.totalCost * 100
       ).toFixed(settings.decimalCount)}¢ ${settings.currency}***`
     )
+
+    AddMessageToConversation(thread, 'assistant', messageContent.join(''))
+
+    function EditMessages() {
+      startedEditing = true
+      if (message.content === messageContent[editSection]) {
+        if (messageSection != editSection) {
+          editSection++
+        }
+        if (finishedMessage) {
+          return
+        }
+      }
+
+      messages[editSection].edit(messageContent[editSection]).then(() => {
+        EditMessages()
+      })
+    }
   }
 
   // HELPER FUNCTIONS
 
-  function AddMessageToConversation(thread, role, completion) {
+  function AddMessageToConversation(thread, role, content) {
+    thread.totalTokens += getEncoding('cl100k_base').encode(content).length
     thread.conversation.push({
       role: role,
-      content: completion,
+      content: content,
     })
   }
+
+  function EditMessages(params) {}
 
   async function GenerateTitle(message) {
     let createTitle = [
@@ -179,30 +232,5 @@ client.on('messageCreate', async (message) => {
     })
 
     return result.choices[0].message.content
-  }
-
-  function SplitLongMessages(messageContent) {
-    const discordCharactorLimit = 2000
-
-    let response = []
-
-    if (messageContent.length < discordCharactorLimit) {
-      response.push(messageContent)
-      return response
-    } else {
-      const sections = Math.ceil(messageContent.length / discordCharactorLimit)
-
-      for (let i = 0; i < sections; i++) {
-        response.push(
-          messageContent.substring(
-            i * discordCharactorLimit,
-            i === sections - 1
-              ? messageContent.length
-              : (i + 1) * discordCharactorLimit
-          )
-        )
-      }
-      return response
-    }
   }
 })
