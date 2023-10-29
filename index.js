@@ -211,8 +211,6 @@ client.on('messageCreate', async (message) => {
     })
   }
 
-  function EditMessages(params) {}
-
   async function GenerateTitle(message) {
     let createTitle = [
       {
