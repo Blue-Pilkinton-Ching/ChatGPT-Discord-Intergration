@@ -1,5 +1,5 @@
 import dotenv from 'dotenv'
-import { Client, IntentsBitField } from 'discord.js'
+import { Client, IntentsBitField, channelLink } from 'discord.js'
 import OpenAI from 'openai'
 import { getEncoding } from 'js-tiktoken'
 
@@ -30,10 +30,10 @@ client.on('messageCreate', async (message) => {
   const settings = {
     headerPrompt:
       'You are a header generator chatbot. You summerise text sent by the user into a concise, simple, and neutral half sentence to be used as a topic header for the message. The header is always less than 35 characters. The header is general, not specific. The header should not be wrapped in any quotations. The header does not try to answer the question or text.',
-    gpt4Prompt:
-      'You are a discord chatbot. You provide clear and concise responses, to user questions and queries.',
-    model: 'gpt-3.5-turbo',
-    // model: 'gpt-4',
+    assistantPrompt:
+      'You are an assistant discord chatbot. You provide clear and concise responses, to the users questions and queries.',
+    modelChoicePrompt:
+      'You are gpt-4. A highly advanced and intelligent AI GPT. You task is to evaluate how important and specific a question from the user is, and output a single number value between 0 and 1, where 0 is simple and 1 is complex. You should not answer the user.\nFactors that you should take in to account:\n- If the topic is specific, the value to should be closer to 1\n- If the topic is general knowlege related, the answer should be closer to 0\n- If the topic has little information about it on the internet, the value should be closer to 1\n- If the topic is a well known idea, it should be closer to 0',
     gpt4Channel: 'ask-gpt-4',
     currency: 'NZD',
     gpt4inputCostPer1k: 0.03,
@@ -73,16 +73,31 @@ client.on('messageCreate', async (message) => {
       autoArchiveDuration: 10080,
     })
 
+    const completion = await openai.chat.completions.create({
+      model: 'gpt-4',
+      messages: [
+        { role: 'system', content: settings.modelChoicePrompt },
+        { role: 'user', content: message.content },
+      ],
+      temperature: 0,
+    })
+
+    let model =
+      parseFloat(completion.choices[0].message.content) > 0.5
+        ? 'gpt-4'
+        : 'gpt-3.5-turbo'
+
     threads.push({
       id: newThread.id,
       conversation: [],
       totalCost: 0,
       totalTokens: 0,
+      model: model,
     })
 
     const thread = threads[threads.length - 1]
 
-    AddMessageToConversation(thread, 'system', settings.gpt4Prompt)
+    AddMessageToConversation(thread, 'system', settings.assistantPrompt)
     AddMessageToConversation(thread, 'user', message.content)
 
     await SendAIResponse(newThread, thread)
@@ -107,8 +122,9 @@ client.on('messageCreate', async (message) => {
 
     const completion = await openai.chat.completions.create({
       messages: thread.conversation,
-      model: settings.model,
+      model: thread.model,
       stream: true,
+      temperature: 0.9,
     })
 
     let messageContent = ['']
@@ -158,12 +174,12 @@ client.on('messageCreate', async (message) => {
     const usdCost =
       thread.totalTokens *
         (0.001 *
-          (settings.model === 'gpt4'
+          (thread.model === 'gpt4'
             ? settings.gpt4inputCostPer1k
             : settings.gpt3inputCostPer1k)) +
       outputTokens *
         0.001 *
-        (settings.model === 'gpt4'
+        (thread.model === 'gpt4'
           ? settings.gpt4outputCostPer1k
           : settings.gpt3outputCostPer1k)
 
@@ -177,7 +193,7 @@ client.on('messageCreate', async (message) => {
     // Send stats
 
     channel.send(
-      `***${settings.model} | ${thread.totalTokens} tokens | ${(
+      `***${thread.model} | ${thread.totalTokens} tokens | ${(
         thread.totalCost * 100
       ).toFixed(settings.decimalCount)}¢ ${settings.currency}***`
     )
@@ -227,8 +243,11 @@ client.on('messageCreate', async (message) => {
     const result = await openai.chat.completions.create({
       messages: createTitle,
       model: 'gpt-3.5-turbo',
+      temperature: 0,
     })
 
     return result.choices[0].message.content
   }
+
+  async function name(params) {}
 })
