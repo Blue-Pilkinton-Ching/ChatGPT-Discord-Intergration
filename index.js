@@ -26,20 +26,23 @@ const openai = new OpenAI({
 
 const threads = []
 
-const settings = {
-  headerPrompt:
-    'You are a header generator chatbot. You summerise text sent by the user into a concise, simple, and neutral half sentence to be used as a topic header for the message. The header is always less than 35 characters. The header is general, not specific. The header should not be wrapped in any quotations. The header does not try to answer the question or text.',
-  gpt4Prompt:
-    'As a Discord chatbot, your primary goal is to provide clear and concise responses.',
-  model: 'gpt-3.5-turbo',
-  //model: 'gpt-4',
-  gpt4Channel: 'ask-gpt-4',
-  currency: 'NZD',
-  inputCostPer1k: 0.03,
-  outputCostPer1k: 0.06,
-}
-
 client.on('messageCreate', async (message) => {
+  const settings = {
+    headerPrompt:
+      'You are a header generator chatbot. You summerise text sent by the user into a concise, simple, and neutral half sentence to be used as a topic header for the message. The header is always less than 35 characters. The header is general, not specific. The header should not be wrapped in any quotations. The header does not try to answer the question or text.',
+    gpt4Prompt:
+      'As a Discord chatbot, your primary goal is to provide clear and concise responses.',
+    model: 'gpt-3.5-turbo',
+    //model: 'gpt-4',
+    gpt4Channel: 'ask-gpt-4',
+    currency: 'NZD',
+    gpt4inputCostPer1k: 0.03,
+    gpt4outputCostPer1k: 0.06,
+    gpt3inputCostPer1k: 0.003,
+    gpt3outputCostPer1k: 0.004,
+    decimalCount: 3,
+  }
+
   if (
     message.author.id != process.env.bjj_user_id ||
     message.content.startsWith('!') ||
@@ -98,8 +101,7 @@ client.on('messageCreate', async (message) => {
     )
 
     await CalculateStats(thread)
-    newThread.send(thread.totalTokens.toString())
-    newThread.send(JSON.stringify(thread.totalCost))
+    SendStats(newThread, thread)
   }
 
   // THREAD CONVERSATION
@@ -123,95 +125,109 @@ client.on('messageCreate', async (message) => {
 
     splitLongMessages(result.choices[0].message.content).forEach(
       (messageContent) => {
-        console.log()
         message.channel.send(messageContent)
       }
     )
 
     await CalculateStats(thread)
-    message.channel.send(thread.totalTokens.toString())
-    message.channel.send(JSON.stringify(thread.totalCost))
+    SendStats(message.channel, thread)
   }
-})
 
-function AddMessageToThread(thread, role, content) {
-  thread.conversation.push({
-    role: role,
-    content: content,
-  })
-}
+  // HELPER FUNCTIONS
 
-async function CalculateStats(thread) {
-  const inputTokens =
-    thread.totalTokens +
-    getEncoding('cl100k_base').encode(
-      thread.conversation[thread.conversation.length - 2].content
+  function SendStats(channel, thread) {
+    channel.send(
+      `***${settings.model} | ${thread.totalTokens} tokens | ${(
+        thread.totalCost * 100
+      ).toFixed(settings.decimalCount)}¢ ${settings.currency}***`
+    )
+  }
+
+  function AddMessageToThread(thread, role, content) {
+    thread.conversation.push({
+      role: role,
+      content: content,
+    })
+  }
+
+  async function CalculateStats(thread) {
+    const inputTokens =
+      thread.totalTokens +
+      getEncoding('cl100k_base').encode(
+        thread.conversation[thread.conversation.length - 2].content
+      ).length
+
+    const outputTokens = getEncoding('cl100k_base').encode(
+      thread.conversation[thread.conversation.length - 1].content
     ).length
 
-  const outputTokens = getEncoding('cl100k_base').encode(
-    thread.conversation[thread.conversation.length - 1].content
-  ).length
+    const usdCost =
+      inputTokens *
+        (0.001 *
+          (settings.model === 'gpt4'
+            ? settings.gpt4inputCostPer1k
+            : settings.gpt3inputCostPer1k)) +
+      outputTokens *
+        0.001 *
+        (settings.model === 'gpt4'
+          ? settings.gpt4outputCostPer1k
+          : settings.gpt3outputCostPer1k)
 
-  const usdCost =
-    inputTokens * 0.001 * settings.inputCostPer1k +
-    outputTokens * 0.001 * settings.outputCostPer1k
+    const fetchLink = `https://v6.exchangerate-api.com/v6/${process.env.exchange_rate_key}/pair/USD/${settings.currency}`
 
-  const fetchLink = `http://api.exchangeratesapi.io/v1/convert?access_key=${
-    process.env.exchange_rate_key
-  }&from=USD&to=${settings.currency}&amount=${10}`
+    console.log(fetchLink)
 
-  const response = await fetch(fetchLink)
-  const json = await response.json()
+    const response = await fetch(fetchLink)
+    const json = await response.json()
 
-  thread.totalCost = json
+    thread.totalCost = thread.totalCost + json.conversion_rate * usdCost
 
-  console.log(thread.totalCost)
-
-  thread.totalTokens = inputTokens + outputTokens
-}
-
-async function GenerateTitle(message) {
-  let createTitle = [
-    {
-      role: 'system',
-      content: settings.headerPrompt,
-    },
-  ]
-
-  createTitle.push({
-    role: 'user',
-    content: message.content,
-  })
-
-  const result = await openai.chat.completions.create({
-    messages: createTitle,
-    model: 'gpt-3.5-turbo',
-  })
-
-  return result.choices[0].message.content
-}
-
-function splitLongMessages(messageContent) {
-  const discordCharactorLimit = 2000
-
-  let response = []
-
-  if (messageContent.length < discordCharactorLimit) {
-    response.push(messageContent)
-    return response
-  } else {
-    const sections = Math.ceil(messageContent.length / discordCharactorLimit)
-
-    for (let i = 0; i < sections; i++) {
-      response.push(
-        messageContent.substring(
-          i * discordCharactorLimit,
-          i === sections - 1
-            ? messageContent.length
-            : (i + 1) * discordCharactorLimit
-        )
-      )
-    }
-    return response
+    thread.totalTokens = inputTokens + outputTokens
   }
-}
+
+  async function GenerateTitle(message) {
+    let createTitle = [
+      {
+        role: 'system',
+        content: settings.headerPrompt,
+      },
+    ]
+
+    createTitle.push({
+      role: 'user',
+      content: message.content,
+    })
+
+    const result = await openai.chat.completions.create({
+      messages: createTitle,
+      model: 'gpt-3.5-turbo',
+    })
+
+    return result.choices[0].message.content
+  }
+
+  function splitLongMessages(messageContent) {
+    const discordCharactorLimit = 2000
+
+    let response = []
+
+    if (messageContent.length < discordCharactorLimit) {
+      response.push(messageContent)
+      return response
+    } else {
+      const sections = Math.ceil(messageContent.length / discordCharactorLimit)
+
+      for (let i = 0; i < sections; i++) {
+        response.push(
+          messageContent.substring(
+            i * discordCharactorLimit,
+            i === sections - 1
+              ? messageContent.length
+              : (i + 1) * discordCharactorLimit
+          )
+        )
+      }
+      return response
+    }
+  }
+})
