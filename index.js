@@ -33,7 +33,7 @@ client.on('messageCreate', async (message) => {
     assistantPrompt:
       'You are an assistant discord chatbot. You provide clear and concise responses, to the users questions and queries.',
     modelChoicePrompt:
-      'You are gpt-4. A highly advanced and intelligent AI GPT. You task is to evaluate how important and specific a question from the user is, and output a single number value between 0 and 1, where 0 is simple and 1 is complex. You should not answer the user.\nFactors that you should take in to account:\n- If the topic is specific, the value to should be closer to 1\n- If the topic is general knowlege related, the answer should be closer to 0\n- If the topic has little information about it on the internet, the value should be closer to 1\n- If the topic is a well known idea, it should be closer to 0',
+      'You are gpt-3. A highly advanced and intelligent AI GPT. You task is to evaluate how important and specific a question from the user is, and output a single number value between 0 and 1, where 0 is simple and 1 is complex. You should not answer the user.\nFactors that you should take in to account:\n- If the topic is specific, the value to should be closer to 1\n- If the topic is general knowlege related, the answer should be closer to 0\n- If the topic has little information about it on the internet, the value should be closer to 1\n- If the topic is a well known idea, it should be closer to 0',
     gpt4Channel: 'ask-gpt-4',
     currency: 'NZD',
     gpt4inputCostPer1k: 0.03,
@@ -66,12 +66,14 @@ client.on('messageCreate', async (message) => {
     message.channel.name === settings.gpt4Channel &&
     !message.channel.isThread()
   ) {
-    const title = await GenerateTitle(message)
-
     let newThread = await message.startThread({
-      name: title,
+      name: 'Loading...',
       autoArchiveDuration: 10080,
     })
+
+    console.log('Received Message: ' + message.content)
+
+    GenerateTitle(message).then((result) => newThread.setName(result))
 
     const completion = await openai.chat.completions.create({
       model: 'gpt-4',
@@ -80,6 +82,7 @@ client.on('messageCreate', async (message) => {
         { role: 'user', content: message.content },
       ],
       temperature: 0,
+      max_tokens: 3,
     })
 
     let model =
@@ -100,7 +103,7 @@ client.on('messageCreate', async (message) => {
     AddMessageToConversation(thread, 'system', settings.assistantPrompt)
     AddMessageToConversation(thread, 'user', message.content)
 
-    await SendAIResponse(newThread, thread)
+    await SendAIResponse(newThread, thread, true)
   }
 
   // THREAD CONVERSATION
@@ -117,7 +120,7 @@ client.on('messageCreate', async (message) => {
 
   // AI RESPONSE
 
-  async function SendAIResponse(channel, thread) {
+  async function SendAIResponse(channel, thread, firstMessage = false) {
     channel.sendTyping()
 
     const completion = await openai.chat.completions.create({
@@ -192,6 +195,28 @@ client.on('messageCreate', async (message) => {
 
     // Send stats
 
+    if (firstMessage) {
+      const headerPromptTokens = getEncoding('cl100k_base').encode(
+        settings.headerPrompt
+      ).length
+      const headerResponseTokens = getEncoding('cl100k_base').encode(
+        channel.name
+      ).length
+      const choiceProptTokens = getEncoding('cl100k_base').encode(
+        settings.modelChoicePrompt
+      ).length
+      const choiceResponseTokens = 3
+
+      const inputCost =
+        settings.gpt3inputCostPer1k * (headerPromptTokens + choiceProptTokens)
+      const outputCost =
+        settings.gpt3outputCostPer1k *
+        (choiceProptTokens + choiceResponseTokens)
+
+      thread.totalCost +=
+        json.conversion_rate * 0.001 * (inputCost + outputCost)
+    }
+
     channel.send(
       `***${thread.model} | ${thread.totalTokens} tokens | ${(
         thread.totalCost * 100
@@ -243,6 +268,7 @@ client.on('messageCreate', async (message) => {
     const result = await openai.chat.completions.create({
       messages: createTitle,
       model: 'gpt-3.5-turbo',
+      max_tokens: 10,
       temperature: 0,
     })
 
