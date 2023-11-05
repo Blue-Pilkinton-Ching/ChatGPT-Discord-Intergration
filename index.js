@@ -177,12 +177,12 @@ client.on('messageCreate', async (message) => {
     const usdCost =
       thread.totalTokens *
         (0.001 *
-          (thread.model === 'gpt4'
+          (thread.model === 'gpt-4'
             ? settings.gpt4inputCostPer1k
             : settings.gpt3inputCostPer1k)) +
       outputTokens *
         0.001 *
-        (thread.model === 'gpt4'
+        (thread.model === 'gpt-4'
           ? settings.gpt4outputCostPer1k
           : settings.gpt3outputCostPer1k)
 
