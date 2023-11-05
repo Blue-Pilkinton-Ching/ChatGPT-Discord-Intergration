@@ -33,7 +33,7 @@ client.on('messageCreate', async (message) => {
     assistantPrompt:
       'You are an assistant discord chatbot. You provide clear and concise responses, to the users questions and queries.',
     modelChoicePrompt:
-      'You are gpt-3. A highly advanced and intelligent AI GPT. You task is to evaluate how important and specific a question from the user is, and output a single number value between 0 and 1, where 0 is simple and 1 is complex. You should not answer the user.\nFactors that you should take in to account:\n- If the topic is specific, the value to should be closer to 1\n- If the topic is general knowlege related, the answer should be closer to 0\n- If the topic has little information about it on the internet, the value should be closer to 1\n- If the topic is a well known idea, it should be closer to 0\n- If the user explicity asks for gpt4 the value should be 1. \n- If the user explicity asks for gpt3 the value should be 0.',
+      'You are gpt-4. A highly advanced and intelligent AI GPT. You task is to evaluate how important and specific a question from the user is, and output a single number value between 0 and 1, where 0 is simple and 1 is complex. You should not answer the user.\nFactors that you should take in to account:\n- If the topic is specific, the value to should be closer to 1\n- If the topic is general knowlege related, the answer should be closer to 0\n- If the topic has little information about it on the internet, the value should be closer to 1\n- If the topic is a well known idea, it should be closer to 0\n- If the user explicity asks for gpt4 the value should be 1. \n- If the user explicity asks for gpt3 the value should be 0.',
     gpt4Channel: 'ask-gpt-4',
     currency: 'NZD',
     gpt4inputCostPer1k: 0.03,
@@ -76,7 +76,7 @@ client.on('messageCreate', async (message) => {
     GenerateTitle(message).then((result) => newThread.setName(result))
 
     const completion = await openai.chat.completions.create({
-      model: 'gpt-3.5-turbo',
+      model: 'gpt-4',
       messages: [
         { role: 'system', content: settings.modelChoicePrompt },
         { role: 'user', content: message.content },
@@ -208,10 +208,11 @@ client.on('messageCreate', async (message) => {
       const choiceResponseTokens = 3
 
       const inputCost =
-        settings.gpt3inputCostPer1k * (headerPromptTokens + choiceProptTokens)
+        settings.gpt3inputCostPer1k * headerPromptTokens +
+        choiceProptTokens * settings.gpt4inputCostPer1k
       const outputCost =
-        settings.gpt3outputCostPer1k *
-        (choiceProptTokens + choiceResponseTokens)
+        settings.gpt3outputCostPer1k * headerResponseTokens +
+        choiceResponseTokens * settings.gpt4outputCostPer1k
 
       thread.totalCost +=
         json.conversion_rate * 0.001 * (inputCost + outputCost)
