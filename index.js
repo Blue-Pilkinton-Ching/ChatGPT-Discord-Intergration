@@ -76,7 +76,7 @@ client.on('messageCreate', async (message) => {
     GenerateTitle(message).then((result) => newThread.setName(result))
 
     const completion = await openai.chat.completions.create({
-      model: 'gpt-4',
+      model: 'gpt-3.5-turbo',
       messages: [
         { role: 'system', content: settings.modelChoicePrompt },
         { role: 'user', content: message.content },
