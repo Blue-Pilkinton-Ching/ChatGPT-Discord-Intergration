@@ -203,7 +203,7 @@ client.on('messageCreate', async (message) => {
         json.conversion_rate * 0.001 * (inputCost + outputCost)
     }
 
-    const out = `{thread.model} | ${thread.totalTokens} tokens | ${(
+    const out = `${thread.model} | ${thread.totalTokens} tokens | ${(
       thread.totalCost * 100
     ).toFixed(settings.decimalCount)}¢ ${settings.currency}`
 
