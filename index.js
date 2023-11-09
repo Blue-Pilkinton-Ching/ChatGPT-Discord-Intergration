@@ -21,28 +21,27 @@ client.on('ready', () => {
 })
 
 const openai = new OpenAI({
-  apiKey: process.env.open_ai_token, // This is also the default, can be omitted
+  apiKey: process.env.open_ai_token,
 })
 
 const threads = []
+let nextModel = 'gpt-4-1106-preview'
+
+const settings = {
+  headerPrompt:
+    'You are a header generator chatbot. You summerise text sent by the user into a concise, simple, and neutral half sentence to be used as a topic header for the message. The header is always less than 35 characters. The header is general, not specific. The header should not be wrapped in any quotations. The header does not try to answer the question or text.',
+  assistantPrompt:
+    'You are an assistant discord chatbot. You provide clear and concise responses, to the users questions and queries.',
+  gptChannel: 'ask-gpt',
+  currency: 'NZD',
+  gpt4inputCostPer1k: 0.01,
+  gpt4outputCostPer1k: 0.03,
+  gpt3inputCostPer1k: 0.001,
+  gpt3outputCostPer1k: 0.002,
+  decimalCount: 3,
+}
 
 client.on('messageCreate', async (message) => {
-  const settings = {
-    headerPrompt:
-      'You are a header generator chatbot. You summerise text sent by the user into a concise, simple, and neutral half sentence to be used as a topic header for the message. The header is always less than 35 characters. The header is general, not specific. The header should not be wrapped in any quotations. The header does not try to answer the question or text.',
-    assistantPrompt:
-      'You are an assistant discord chatbot. You provide clear and concise responses, to the users questions and queries.',
-    modelChoicePrompt:
-      'You are gpt-4. A highly advanced and intelligent AI GPT. You task is to evaluate how important and specific a question from the user is, and output a single number value between 0 and 1, where 0 is simple and 1 is complex. You should not answer the user.\nFactors that you should take in to account:\n- If the topic is specific, the value to should be closer to 1\n- If the topic is general knowlege related, the answer should be closer to 0\n- If the topic has little information about it on the internet, the value should be closer to 1\n- If the topic is a well known idea, it should be closer to 0\n- If the user explicity asks for gpt4 the value should be 1. \n- If the user explicity asks for gpt3 the value should be 0.',
-    gpt4Channel: 'ask-gpt-4',
-    currency: 'NZD',
-    gpt4inputCostPer1k: 0.03,
-    gpt4outputCostPer1k: 0.06,
-    gpt3inputCostPer1k: 0.0015,
-    gpt3outputCostPer1k: 0.002,
-    decimalCount: 3,
-  }
-
   if (
     message.author.id != process.env.bjj_user_id ||
     message.content.startsWith('!') ||
@@ -52,18 +51,26 @@ client.on('messageCreate', async (message) => {
   }
 
   if (
-    message.content === '/clear' &&
-    message.channel.name === settings.gpt4Channel
+    message.channel.name === settings.gptChannel &&
+    message.content.startsWith('/')
   ) {
-    message.channel.threads.cache.forEach((thread) => {
-      thread.delete()
-    })
+    if (message.content === '/clear') {
+      message.channel.threads.cache.forEach((thread) => {
+        thread.delete()
+      })
+    } else if (message.content === '/gpt3') {
+      nextModel = 'gpt-3.5-turbo-1106'
+      message.channel.send('***Set model to GPT-3***')
+    } else if (message.content === '/gpt4') {
+      nextModel = 'gpt-4-1106-preview'
+      message.channel.send('***Set model to GPT-4***')
+    }
     return
   }
 
   // THREAD STARTING
   if (
-    message.channel.name === settings.gpt4Channel &&
+    message.channel.name === settings.gptChannel &&
     !message.channel.isThread()
   ) {
     let newThread = await message.startThread({
@@ -75,28 +82,15 @@ client.on('messageCreate', async (message) => {
 
     GenerateTitle(message).then((result) => newThread.setName(result))
 
-    const completion = await openai.chat.completions.create({
-      model: 'gpt-4',
-      messages: [
-        { role: 'system', content: settings.modelChoicePrompt },
-        { role: 'user', content: message.content },
-      ],
-      temperature: 0,
-      max_tokens: 3,
-    })
-
-    let model =
-      parseFloat(completion.choices[0].message.content) > 0.5
-        ? 'gpt-4'
-        : 'gpt-3.5-turbo'
-
     threads.push({
       id: newThread.id,
       conversation: [],
       totalCost: 0,
       totalTokens: 0,
-      model: model,
+      model: nextModel,
     })
+
+    nextModel = 'gpt-4-1106-preview'
 
     const thread = threads[threads.length - 1]
 
@@ -109,7 +103,7 @@ client.on('messageCreate', async (message) => {
   // THREAD CONVERSATION
   if (
     message.channel.isThread() &&
-    message.channel.parent.name === settings.gpt4Channel
+    message.channel.parent.name === settings.gptChannel
   ) {
     const thread =
       threads[threads.findIndex((thread) => thread.id === message.channel.id)]
@@ -177,12 +171,12 @@ client.on('messageCreate', async (message) => {
     const usdCost =
       thread.totalTokens *
         (0.001 *
-          (thread.model === 'gpt-4'
+          (thread.model === 'gpt-4-1106-preview'
             ? settings.gpt4inputCostPer1k
             : settings.gpt3inputCostPer1k)) +
       outputTokens *
         0.001 *
-        (thread.model === 'gpt-4'
+        (thread.model === 'gpt-4-1106-preview'
           ? settings.gpt4outputCostPer1k
           : settings.gpt3outputCostPer1k)
 
@@ -202,27 +196,19 @@ client.on('messageCreate', async (message) => {
       const headerResponseTokens = getEncoding('cl100k_base').encode(
         channel.name
       ).length
-      const choiceProptTokens = getEncoding('cl100k_base').encode(
-        settings.modelChoicePrompt
-      ).length
-      const choiceResponseTokens = 3
 
-      const inputCost =
-        settings.gpt3inputCostPer1k * headerPromptTokens +
-        choiceProptTokens * settings.gpt4inputCostPer1k
-      const outputCost =
-        settings.gpt3outputCostPer1k * headerResponseTokens +
-        choiceResponseTokens * settings.gpt4outputCostPer1k
-
+      const inputCost = settings.gpt3inputCostPer1k * headerPromptTokens
+      const outputCost = settings.gpt3outputCostPer1k * headerResponseTokens
       thread.totalCost +=
         json.conversion_rate * 0.001 * (inputCost + outputCost)
     }
 
-    channel.send(
-      `***${thread.model} | ${thread.totalTokens} tokens | ${(
-        thread.totalCost * 100
-      ).toFixed(settings.decimalCount)}¢ ${settings.currency}***`
-    )
+    const out = `{thread.model} | ${thread.totalTokens} tokens | ${(
+      thread.totalCost * 100
+    ).toFixed(settings.decimalCount)}¢ ${settings.currency}`
+
+    channel.send(`***${out}***`)
+    console.log(`Response: ${out}`)
 
     AddMessageToConversation(thread, 'assistant', messageContent.join(''))
 
@@ -268,13 +254,11 @@ client.on('messageCreate', async (message) => {
 
     const result = await openai.chat.completions.create({
       messages: createTitle,
-      model: 'gpt-3.5-turbo',
+      model: 'gpt-3.5-turbo-1106',
       max_tokens: 10,
       temperature: 0,
     })
 
     return result.choices[0].message.content
   }
-
-  async function name(params) {}
 })
