@@ -124,7 +124,7 @@ client.on('messageCreate', async (message) => {
       temperature: 0.9,
     })
 
-    let messageContent = ['']
+    let messageContentGoal = ['']
     let messageSection = 0
     let editSection = 0
     let outputTokens = 0
@@ -145,7 +145,7 @@ client.on('messageCreate', async (message) => {
         outputTokens++
 
         if (
-          messageContent[messageSection].length + chunkContent.length >=
+          messageContentGoal[messageSection].length + chunkContent.length >=
           2000
         ) {
           messageSection += 1
@@ -153,17 +153,35 @@ client.on('messageCreate', async (message) => {
           const newMessage = await channel.send('Waiting for stream...')
 
           messages[messageSection] = newMessage
-          messageContent.push('')
+          messageContentGoal.push('')
         }
 
-        messageContent[messageSection] =
-          messageContent[messageSection] + chunkContent
+        messageContentGoal[messageSection] =
+          messageContentGoal[messageSection] + chunkContent
 
         if (!startedEditing) {
-          startedEditing
           EditMessages()
         }
       }
+    }
+
+    function EditMessages() {
+      startedEditing = true
+      if (
+        messageContentGoal[editSection].trim() === messages[editSection].content
+      ) {
+        if (messageSection === editSection) {
+          if (finishedMessage) {
+            return
+          }
+        } else {
+          editSection++
+        }
+      }
+
+      messages[editSection].edit(messageContentGoal[editSection]).then(() => {
+        EditMessages()
+      })
     }
 
     // Calculate stats
@@ -210,23 +228,7 @@ client.on('messageCreate', async (message) => {
     channel.send(`***${out}***`)
     console.log(`Response: ${out}`)
 
-    AddMessageToConversation(thread, 'assistant', messageContent.join(''))
-
-    function EditMessages() {
-      startedEditing = true
-      if (message.content === messageContent[editSection]) {
-        if (messageSection != editSection) {
-          editSection++
-        }
-        if (finishedMessage) {
-          return
-        }
-      }
-
-      messages[editSection].edit(messageContent[editSection]).then(() => {
-        EditMessages()
-      })
-    }
+    AddMessageToConversation(thread, 'assistant', messageContentGoal.join(''))
   }
 
   // HELPER FUNCTIONS
